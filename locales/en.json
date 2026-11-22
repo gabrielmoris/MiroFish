@@ -335,10 +335,6 @@
     "unknownFile": "Unknown file"
   },
   "api": {
-    "projectHasActiveSimulations": "Stop the running or paused simulation first: {ids}",
-    "pauseUnsupported": "Pause is only available for runs that use both platforms",
-    "pauseNotRunning": "Only a running simulation can be paused",
-    "resumeNotPaused": "This simulation is not paused",
     "projectNotFound": "Project not found: {id}",
     "projectDeleteFailed": "Project not found or deletion failed: {id}",
     "projectDeleted": "Project deleted: {id}",
@@ -361,6 +357,10 @@
     "entityNotFound": "Entity not found: {id}",
     "graphNotBuilt": "Graph not yet built. Please call /api/graph/build first.",
     "requireSimulationId": "Please provide simulation_id",
+    "projectHasActiveSimulations": "Stop the running or paused simulation first: {ids}",
+    "pauseUnsupported": "Pause is only available for runs that use both platforms",
+    "pauseNotRunning": "Only a running simulation can be paused",
+    "resumeNotPaused": "This simulation is not paused",
     "simulationNotFound": "Simulation not found: {id}",
     "projectMissingRequirement": "Project missing simulation requirement (simulation_requirement)",
     "prepareStarted": "Preparation task started. Query progress via /api/simulation/prepare/status.",

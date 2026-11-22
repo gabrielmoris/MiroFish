@@ -335,10 +335,6 @@
     "unknownFile": "未知文件"
   },
   "api": {
-    "projectHasActiveSimulations": "请先停止运行中或已暂停的模拟：{ids}",
-    "pauseUnsupported": "只有双平台并行运行的模拟支持暂停",
-    "pauseNotRunning": "只有运行中的模拟可以暂停",
-    "resumeNotPaused": "该模拟未处于暂停状态",
     "projectNotFound": "项目不存在: {id}",
     "projectDeleteFailed": "项目不存在或删除失败: {id}",
     "projectDeleted": "项目已删除: {id}",
@@ -361,6 +357,10 @@
     "entityNotFound": "实体不存在: {id}",
     "graphNotBuilt": "项目尚未构建图谱，请先调用 /api/graph/build",
     "requireSimulationId": "请提供 simulation_id",
+    "projectHasActiveSimulations": "请先停止运行中或已暂停的模拟：{ids}",
+    "pauseUnsupported": "只有双平台并行运行的模拟支持暂停",
+    "pauseNotRunning": "只有运行中的模拟可以暂停",
+    "resumeNotPaused": "该模拟未处于暂停状态",
     "simulationNotFound": "模拟不存在: {id}",
     "projectMissingRequirement": "项目缺少模拟需求描述 (simulation_requirement)",
     "prepareStarted": "准备任务已启动，请通过 /api/simulation/prepare/status 查询进度",
