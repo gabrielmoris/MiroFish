@@ -318,7 +318,19 @@
     "untitledSimulation": "Untitled simulation",
     "unknownFile": "Unknown file"
   },
+  "auth": {
+    "title": "Sign in",
+    "subtitle": "This MiroFish instance is protected. Sign in with the username and password set in its environment.",
+    "username": "Username",
+    "password": "Password",
+    "submit": "Sign in",
+    "submitting": "Signing in...",
+    "logout": "Sign out",
+    "required": "Enter your username and password"
+  },
   "api": {
+    "authRequired": "Login required",
+    "invalidCredentials": "Invalid username or password",
     "projectNotFound": "Project not found: {id}",
     "projectDeleteFailed": "Project not found or deletion failed: {id}",
     "projectDeleted": "Project deleted: {id}",

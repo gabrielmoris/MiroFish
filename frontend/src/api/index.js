@@ -1,5 +1,17 @@
 import axios from 'axios'
 import i18n from '../i18n'
+import { authState, clearToken, getToken } from '../utils/auth'
+
+// 登录失效时回到登录页（动态导入 router，避免循环依赖）
+const handleAuthRequired = async () => {
+  clearToken()
+  authState.authenticated = false
+  const { default: router } = await import('../router')
+  const current = router.currentRoute.value
+  if (current.name !== 'Login') {
+    router.replace({ name: 'Login', query: { redirect: current.fullPath } })
+  }
+}
 
 // 创建axios实例
 const service = axios.create({
@@ -14,6 +26,10 @@ const service = axios.create({
 service.interceptors.request.use(
   config => {
     config.headers['Accept-Language'] = i18n.global.locale.value
+    const token = getToken()
+    if (token) {
+      config.headers['Authorization'] = `Bearer ${token}`
+    }
     return config
   },
   error => {
@@ -39,6 +55,11 @@ service.interceptors.response.use(
     console.error('Response error:', error)
     const apiError = error.response?.data?.error || error.response?.data?.message
     
+    // 未登录或令牌已过期（错误的用户名/密码不带此 code，由登录页自行显示）
+    if (error.response?.status === 401 && error.response?.data?.code === 'auth_required') {
+      handleAuthRequired()
+    }
+
     // 处理超时
     if (error.code === 'ECONNABORTED' && error.message.includes('timeout')) {
       console.error('Request timeout')

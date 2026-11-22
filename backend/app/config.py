@@ -32,6 +32,11 @@ class Config:
     # Zep配置
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
     
+    # 可选登录保护：同时设置用户名和密码才会启用，没有默认值
+    # Optional login: enabled only when both are set; there are no defaults
+    AUTH_USERNAME = os.environ.get('AUTH_USERNAME')
+    AUTH_PASSWORD = os.environ.get('AUTH_PASSWORD')
+
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
     UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), '../uploads')
@@ -70,6 +75,11 @@ class Config:
             errors.append("ZEP_API_KEY 未配置")
         if os.environ.get("ZEP_API_URL"):
             errors.append("ZEP_API_URL 不受支持；MiroFish 仅连接 Zep Cloud")
+        if bool(cls.AUTH_USERNAME) != bool(cls.AUTH_PASSWORD):
+            errors.append(
+                "AUTH_USERNAME 和 AUTH_PASSWORD 必须同时设置或同时留空 "
+                "(set both to enable login, or neither)"
+            )
         if cls.DEBUG:
             import warnings
             warnings.warn("Flask DEBUG mode is enabled. Do not use in production.", RuntimeWarning)

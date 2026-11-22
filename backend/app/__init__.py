@@ -9,10 +9,12 @@ import warnings
 # 需要在所有其他导入之前设置
 warnings.filterwarnings("ignore", message=".*resource_tracker.*")
 
-from flask import Flask, request
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 from .config import Config
+from .utils import auth as auth_utils
+from .utils.locale import t
 from .utils.logger import setup_logger, get_logger
 
 
@@ -62,11 +64,27 @@ def create_app(config_class=Config):
         logger.debug(f"响应: {response.status_code}")
         return response
     
+    # 可选登录保护：启用后，除登录接口外的所有 /api 请求都需要有效令牌
+    @app.before_request
+    def require_login():
+        if not auth_utils.is_auth_enabled():
+            return None
+        if request.method == 'OPTIONS' or auth_utils.is_public_path(request.path):
+            return None
+        if auth_utils.verify_token(auth_utils.token_from_request(request)):
+            return None
+        return jsonify({
+            "success": False,
+            "error": t('api.authRequired'),
+            "code": "auth_required",
+        }), 401
+
     # 注册蓝图
-    from .api import graph_bp, simulation_bp, report_bp
+    from .api import graph_bp, simulation_bp, report_bp, auth_bp
     app.register_blueprint(graph_bp, url_prefix='/api/graph')
     app.register_blueprint(simulation_bp, url_prefix='/api/simulation')
     app.register_blueprint(report_bp, url_prefix='/api/report')
+    app.register_blueprint(auth_bp, url_prefix='/api/auth')
     
     # 健康检查
     @app.route('/health')
