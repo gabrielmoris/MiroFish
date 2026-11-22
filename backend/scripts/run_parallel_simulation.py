@@ -156,6 +156,7 @@ def init_logging_for_simulation(simulation_dir: str):
 
 
 from action_logger import SimulationLogManager, PlatformActionLogger
+from pause_control import wait_while_paused
 
 try:
     from camel.models import ModelFactory
@@ -1098,6 +1099,32 @@ class PlatformSimulation:
         self.total_actions = 0
 
 
+async def _wait_at_round_boundary(
+    simulation_dir: str,
+    action_logger: Optional[PlatformActionLogger],
+    log_info,
+    next_round: int,
+) -> bool:
+    """暂停请求时在轮边界等待；返回 False 表示等待期间收到退出信号"""
+
+    def on_paused():
+        log_info(f"已暂停，等待恢复（下一轮: {next_round}）")
+        if action_logger:
+            action_logger.log_pause_event("simulation_paused", next_round)
+
+    def on_resumed():
+        log_info(f"已恢复，继续第 {next_round} 轮")
+        if action_logger:
+            action_logger.log_pause_event("simulation_resumed", next_round)
+
+    return await wait_while_paused(
+        simulation_dir,
+        should_stop=lambda: bool(_shutdown_event and _shutdown_event.is_set()),
+        on_paused=on_paused,
+        on_resumed=on_resumed,
+    )
+
+
 async def run_twitter_simulation(
     config: Dict[str, Any], 
     simulation_dir: str,
@@ -1230,6 +1257,12 @@ async def run_twitter_simulation(
         if _shutdown_event and _shutdown_event.is_set():
             if main_logger:
                 main_logger.info(f"收到退出信号，在第 {round_num + 1} 轮停止模拟")
+            break
+
+        # 暂停：在轮边界等待，环境保持运行，恢复后从这一轮继续
+        if not await _wait_at_round_boundary(simulation_dir, action_logger, log_info, round_num + 1):
+            if main_logger:
+                main_logger.info(f"暂停期间收到退出信号，在第 {round_num + 1} 轮停止模拟")
             break
         
         simulated_minutes = round_num * minutes_per_round
@@ -1429,6 +1462,12 @@ async def run_reddit_simulation(
         if _shutdown_event and _shutdown_event.is_set():
             if main_logger:
                 main_logger.info(f"收到退出信号，在第 {round_num + 1} 轮停止模拟")
+            break
+
+        # 暂停：在轮边界等待，环境保持运行，恢复后从这一轮继续
+        if not await _wait_at_round_boundary(simulation_dir, action_logger, log_info, round_num + 1):
+            if main_logger:
+                main_logger.info(f"暂停期间收到退出信号，在第 {round_num + 1} 轮停止模拟")
             break
         
         simulated_minutes = round_num * minutes_per_round

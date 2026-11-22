@@ -95,6 +95,22 @@ export const stopSimulation = (data) => {
 }
 
 /**
+ * 暂停模拟（当前轮结束后生效）
+ * @param {Object} data - { simulation_id }
+ */
+export const pauseSimulation = (data) => {
+  return service.post('/api/simulation/pause', data)
+}
+
+/**
+ * 恢复已暂停的模拟，或撤销尚未生效的暂停
+ * @param {Object} data - { simulation_id }
+ */
+export const resumeSimulation = (data) => {
+  return service.post('/api/simulation/resume', data)
+}
+
+/**
  * 获取模拟运行实时状态
  * @param {string} simulationId
  */

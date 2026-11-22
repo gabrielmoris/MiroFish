@@ -58,6 +58,7 @@
           :projectData="projectData"
           :graphData="graphData"
           :systemLogs="systemLogs"
+          :startRequested="startRequested"
           @go-back="handleGoBack"
           @next-step="handleNextStep"
           @add-log="addLog"
@@ -94,6 +95,8 @@ const viewMode = ref('split')
 const currentSimulationId = ref(route.params.simulationId)
 // 直接在初始化时从 query 参数获取 maxRounds，确保子组件能立即获取到值
 const maxRounds = ref(route.query.maxRounds ? parseInt(route.query.maxRounds) : null)
+// Step 2 通过 ?start=1 显式开始；只用一次，刷新页面时不会重新开始
+const startRequested = route.query.start === '1'
 const minutesPerRound = ref(30) // 默认每轮30分钟
 const projectData = ref(null)
 const graphData = ref(null)
@@ -122,10 +125,12 @@ const statusClass = computed(() => {
 const statusText = computed(() => {
   if (currentStatus.value === 'error') return 'Error'
   if (currentStatus.value === 'completed') return 'Completed'
+  if (currentStatus.value === 'pausing') return 'Pausing...'
+  if (currentStatus.value === 'paused') return 'Paused'
   return 'Running'
 })
 
-const isSimulating = computed(() => currentStatus.value === 'processing')
+const isSimulating = computed(() => ['processing', 'pausing'].includes(currentStatus.value))
 
 // --- Helpers ---
 const addLog = (msg) => {
@@ -301,6 +306,11 @@ watch(isSimulating, (newValue) => {
 
 onMounted(() => {
   addLog(t('log.simRunViewInit'))
+
+  if (startRequested) {
+    const { start, ...query } = route.query
+    router.replace({ query })
+  }
   
   // 记录 maxRounds 配置（值已在初始化时从 query 参数获取）
   if (maxRounds.value) {
@@ -427,6 +437,8 @@ onUnmounted(() => {
 .status-indicator.processing .dot { background: #FF5722; animation: pulse 1s infinite; }
 .status-indicator.completed .dot { background: #4CAF50; }
 .status-indicator.error .dot { background: #F44336; }
+.status-indicator.pausing .dot { background: #FFB300; animation: pulse 1s infinite; }
+.status-indicator.paused .dot { background: #FFB300; }
 
 @keyframes pulse { 50% { opacity: 0.5; } }
 

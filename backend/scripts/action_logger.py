@@ -115,6 +115,18 @@ class PlatformActionLogger:
         with open(self.log_path, 'a', encoding='utf-8') as f:
             f.write(json.dumps(entry, ensure_ascii=False) + '\n')
 
+    def log_pause_event(self, event_type: str, next_round: int):
+        """记录暂停/恢复（event_type: simulation_paused | simulation_resumed）"""
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "event_type": event_type,
+            "platform": self.platform,
+            "next_round": next_round,
+        }
+
+        with open(self.log_path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+
 
 class SimulationLogManager:
     """

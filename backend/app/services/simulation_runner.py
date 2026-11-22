@@ -20,7 +20,7 @@ from queue import Queue
 
 from ..config import Config
 from ..utils.logger import get_logger
-from ..utils.locale import get_locale, set_locale
+from ..utils.locale import get_locale, set_locale, t
 from ..utils.zep import (
     ZEP_HTTP_REQUEST_TIMEOUT_SECONDS,
     ZEP_INGESTION_WAIT_TIMEOUT_SECONDS,
@@ -133,6 +133,11 @@ class SimulationRunState:
     # 平台完成状态（通过检测 actions.jsonl 中的 simulation_end 事件）
     twitter_completed: bool = False
     reddit_completed: bool = False
+
+    # 暂停：已请求暂停（等待当前轮结束）与各平台是否已在轮边界停住
+    pause_requested: bool = False
+    twitter_paused: bool = False
+    reddit_paused: bool = False
     
     # 每轮摘要
     rounds: List[RoundSummary] = field(default_factory=list)
@@ -183,6 +188,9 @@ class SimulationRunState:
             "reddit_running": self.reddit_running,
             "twitter_completed": self.twitter_completed,
             "reddit_completed": self.reddit_completed,
+            "pause_requested": self.pause_requested,
+            "twitter_paused": self.twitter_paused,
+            "reddit_paused": self.reddit_paused,
             "twitter_actions_count": self.twitter_actions_count,
             "reddit_actions_count": self.reddit_actions_count,
             "total_actions_count": self.twitter_actions_count + self.reddit_actions_count,
@@ -237,6 +245,19 @@ class SimulationRunner:
     _finalization_locks: Dict[str, threading.Lock] = {}
     _finalization_locks_guard = threading.Lock()
     _manual_stop_requests: set[str] = set()
+    # 已请求暂停的模拟（监控线程据此写回 pause_requested，避免被内存状态覆盖）
+    _pause_requests: set[str] = set()
+    # 以并行脚本运行的模拟；只有该脚本支持轮边界暂停
+    _parallel_runs: set[str] = set()
+
+    # 暂停控制文件（与 scripts/pause_control.py 保持一致）
+    PAUSE_CONTROL_FILENAME = "pause_control.json"
+    ACTIVE_STATUSES = frozenset({
+        RunnerStatus.STARTING,
+        RunnerStatus.RUNNING,
+        RunnerStatus.PAUSED,
+        RunnerStatus.STOPPING,
+    })
 
     @classmethod
     def _finalization_lock(cls, simulation_id: str) -> threading.Lock:
@@ -258,6 +279,7 @@ class SimulationRunner:
 
         status_map = {
             RunnerStatus.RUNNING: SimulationStatus.RUNNING,
+            RunnerStatus.PAUSED: SimulationStatus.PAUSED,
             RunnerStatus.STOPPING: SimulationStatus.STOPPING,
             RunnerStatus.STOPPED: SimulationStatus.STOPPED,
             RunnerStatus.COMPLETED: SimulationStatus.COMPLETED,
@@ -324,6 +346,9 @@ class SimulationRunner:
                 reddit_running=data.get("reddit_running", False),
                 twitter_completed=data.get("twitter_completed", False),
                 reddit_completed=data.get("reddit_completed", False),
+                pause_requested=data.get("pause_requested", False),
+                twitter_paused=data.get("twitter_paused", False),
+                reddit_paused=data.get("reddit_paused", False),
                 twitter_actions_count=data.get("twitter_actions_count", 0),
                 reddit_actions_count=data.get("reddit_actions_count", 0),
                 started_at=data.get("started_at"),
@@ -473,6 +498,13 @@ class SimulationRunner:
             script_name = "run_parallel_simulation.py"
             state.twitter_running = True
             state.reddit_running = True
+
+        # 新的运行不能继承上一次留下的暂停请求
+        cls._clear_pause(simulation_id)
+        if script_name == "run_parallel_simulation.py":
+            cls._parallel_runs.add(simulation_id)
+        else:
+            cls._parallel_runs.discard(simulation_id)
         
         script_path = os.path.join(cls.SCRIPTS_DIR, script_name)
         
@@ -652,6 +684,7 @@ class SimulationRunner:
                     )
                 
                 # 更新状态
+                state.pause_requested = simulation_id in cls._pause_requests
                 cls._save_run_state(state)
                 time.sleep(2)
             
@@ -818,6 +851,8 @@ class SimulationRunner:
                                     # 如果运行了两个平台，需要两个都完成
                                     all_completed = cls._check_all_platforms_completed(state)
                                     if all_completed:
+                                        cls._clear_pause(state.simulation_id)
+                                        state.pause_requested = False
                                         # Platform completion is only an input
                                         # signal. The monitor publishes the
                                         # terminal status after the process has
@@ -827,6 +862,14 @@ class SimulationRunner:
                                             f"{state.simulation_id}"
                                         )
                                 
+                                elif event_type in ("simulation_paused", "simulation_resumed"):
+                                    paused = event_type == "simulation_paused"
+                                    if platform == "twitter":
+                                        state.twitter_paused = paused
+                                    elif platform == "reddit":
+                                        state.reddit_paused = paused
+                                    cls._apply_pause_status(state)
+
                                 # 更新轮次信息（从 round_end 事件）
                                 elif event_type == "round_end":
                                     round_num = action_data.get("round", 0)
@@ -962,6 +1005,134 @@ class SimulationRunner:
                 process.wait(timeout=5)
     
     @classmethod
+    def _pause_control_path(cls, simulation_id: str) -> str:
+        return os.path.join(cls.RUN_STATE_DIR, simulation_id, cls.PAUSE_CONTROL_FILENAME)
+
+    @classmethod
+    def _write_pause_control(cls, simulation_id: str, action: str) -> None:
+        """原子写入暂停控制文件；模拟脚本在每轮开始前读取它"""
+        path = cls._pause_control_path(simulation_id)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump({"action": action, "at": datetime.now().isoformat()}, f)
+        os.replace(tmp_path, path)
+
+    @classmethod
+    def _clear_pause(cls, simulation_id: str) -> None:
+        """撤销暂停请求并删除控制文件（脚本随后继续运行）"""
+        cls._pause_requests.discard(simulation_id)
+        try:
+            os.remove(cls._pause_control_path(simulation_id))
+        except FileNotFoundError:
+            pass
+
+    @classmethod
+    def _apply_pause_status(cls, state: SimulationRunState) -> None:
+        """
+        所有仍在运行的平台都在轮边界停住后才算 PAUSED；
+        任一平台恢复后回到 RUNNING。只在 RUNNING/PAUSED 之间切换，不覆盖停止中的状态。
+        """
+        if state.runner_status not in (RunnerStatus.RUNNING, RunnerStatus.PAUSED):
+            return
+
+        in_progress = [
+            paused
+            for running, completed, paused in (
+                (state.twitter_running, state.twitter_completed, state.twitter_paused),
+                (state.reddit_running, state.reddit_completed, state.reddit_paused),
+            )
+            if running and not completed
+        ]
+        desired = (
+            RunnerStatus.PAUSED
+            if in_progress and all(in_progress)
+            else RunnerStatus.RUNNING
+        )
+        if desired != state.runner_status:
+            state.runner_status = desired
+            state.updated_at = datetime.now().isoformat()
+            cls._sync_simulation_status(state.simulation_id, desired)
+            logger.info(f"模拟状态: {state.simulation_id} -> {desired.value}")
+
+    @classmethod
+    def pause_simulation(cls, simulation_id: str) -> SimulationRunState:
+        """
+        请求暂停：脚本跑完当前轮后在轮边界等待，环境保持运行。
+        状态先保持 RUNNING（pause_requested=True），脚本确认停住后变为 PAUSED。
+        """
+        with cls._finalization_lock(simulation_id):
+            state = cls.get_run_state(simulation_id)
+            if not state:
+                raise ValueError(t('api.simulationNotFound', id=simulation_id))
+            if state.runner_status == RunnerStatus.PAUSED or simulation_id in cls._pause_requests:
+                return state
+            if simulation_id not in cls._parallel_runs:
+                raise ValueError(t('api.pauseUnsupported'))
+
+            process = cls._processes.get(simulation_id)
+            if (
+                state.runner_status != RunnerStatus.RUNNING
+                or not process
+                or process.poll() is not None
+                or cls._check_all_platforms_completed(state)
+            ):
+                raise ValueError(t('api.pauseNotRunning'))
+
+            cls._write_pause_control(simulation_id, "pause")
+            cls._pause_requests.add(simulation_id)
+            state.pause_requested = True
+            state.updated_at = datetime.now().isoformat()
+            cls._save_run_state(state)
+
+        logger.info(f"已请求暂停（当前轮结束后生效）: {simulation_id}")
+        return state
+
+    @classmethod
+    def resume_simulation(cls, simulation_id: str) -> SimulationRunState:
+        """恢复已暂停的模拟，或撤销尚未生效的暂停请求"""
+        with cls._finalization_lock(simulation_id):
+            state = cls.get_run_state(simulation_id)
+            if not state:
+                raise ValueError(t('api.simulationNotFound', id=simulation_id))
+            if (
+                state.runner_status != RunnerStatus.PAUSED
+                and simulation_id not in cls._pause_requests
+            ):
+                raise ValueError(t('api.resumeNotPaused'))
+
+            cls._clear_pause(simulation_id)
+            state.pause_requested = False
+            state.updated_at = datetime.now().isoformat()
+            cls._save_run_state(state)
+
+        logger.info(f"已请求恢复: {simulation_id}")
+        return state
+
+    @classmethod
+    def is_simulation_active(cls, simulation_id: str) -> bool:
+        """运行中/暂停/启动或停止中，或进程、监控线程仍存活"""
+        state = cls.get_run_state(simulation_id)
+        if state and state.runner_status in cls.ACTIVE_STATUSES:
+            return True
+        process = cls._processes.get(simulation_id)
+        if process and process.poll() is None:
+            return True
+        monitor = cls._monitor_threads.get(simulation_id)
+        return bool(monitor and monitor.is_alive())
+
+    @classmethod
+    def forget_simulation(cls, simulation_id: str) -> None:
+        """删除模拟前清理内存中的记录（调用方须先确认模拟不再活动）"""
+        cls._run_states.pop(simulation_id, None)
+        cls._processes.pop(simulation_id, None)
+        cls._monitor_threads.pop(simulation_id, None)
+        cls._graph_memory_enabled.pop(simulation_id, None)
+        cls._pause_requests.discard(simulation_id)
+        cls._parallel_runs.discard(simulation_id)
+        cls._manual_stop_requests.discard(simulation_id)
+
+    @classmethod
     def stop_simulation(cls, simulation_id: str) -> SimulationRunState:
         """停止模拟"""
         with cls._finalization_lock(simulation_id):
@@ -994,6 +1165,9 @@ class SimulationRunner:
 
             state.runner_status = RunnerStatus.STOPPING
             cls._manual_stop_requests.add(simulation_id)
+            # 停止优先于暂停：清除暂停请求，等待中的脚本收到信号后退出
+            cls._clear_pause(simulation_id)
+            state.pause_requested = False
             cls._save_run_state(state)
             cls._sync_simulation_status(simulation_id, RunnerStatus.STOPPING)
 
@@ -1403,6 +1577,7 @@ class SimulationRunner:
             "twitter_simulation.db",  # Twitter 平台数据库
             "reddit_simulation.db",   # Reddit 平台数据库
             "env_status.json",        # 环境状态文件
+            "pause_control.json",     # 暂停控制文件
         ]
         
         # 要删除的目录列表（包含动作日志）

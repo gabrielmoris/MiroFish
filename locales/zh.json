@@ -177,6 +177,14 @@
     "generating": "生成中"
   },
   "step3": {
+    "pauseBtn": "暂停",
+    "resumeBtn": "继续",
+    "stopBtn": "停止",
+    "stoppingBtn": "停止中...",
+    "restartBtn": "重新运行",
+    "restartConfirmBtn": "再次点击确认重新运行",
+    "pauseTooltip": "当前轮结束后暂停，Agent 环境保持运行",
+    "restartTooltip": "从第 1 轮重新运行模拟，保留 Agent 人设和配置",
     "startGenerateReport": "开始生成结果报告",
     "generatingReport": "启动中...",
     "waitingForActions": "Waiting for agent actions...",
@@ -298,6 +306,14 @@
     "closeHint": "关闭提示"
   },
   "history": {
+    "restartButton": "重新运行模拟",
+    "restartConfirm": "从第 1 轮重新运行该模拟？上次运行的结果将被替换，Agent 人设和配置保留。",
+    "deleteButton": "删除项目",
+    "deleteConfirm": "删除该项目及其全部内容：所有模拟、报告、上传的文件和知识图谱。此操作无法撤销。",
+    "deleteConfirmButton": "全部删除",
+    "deleting": "删除中...",
+    "deleteFailed": "删除失败：{error}",
+    "cancel": "取消",
     "title": "推演记录",
     "graphBuild": "图谱构建",
     "envSetup": "环境搭建",
@@ -319,6 +335,10 @@
     "unknownFile": "未知文件"
   },
   "api": {
+    "projectHasActiveSimulations": "请先停止运行中或已暂停的模拟：{ids}",
+    "pauseUnsupported": "只有双平台并行运行的模拟支持暂停",
+    "pauseNotRunning": "只有运行中的模拟可以暂停",
+    "resumeNotPaused": "该模拟未处于暂停状态",
     "projectNotFound": "项目不存在: {id}",
     "projectDeleteFailed": "项目不存在或删除失败: {id}",
     "projectDeleted": "项目已删除: {id}",
@@ -453,6 +473,15 @@
     "preparingScripts": "准备模拟脚本"
   },
   "log": {
+    "pauseRequested": "已请求暂停：当前轮结束后暂停",
+    "pauseFailed": "暂停失败：{error}",
+    "simPaused": "模拟已暂停",
+    "resumeRequested": "正在恢复模拟",
+    "resumeFailed": "恢复失败：{error}",
+    "simResumed": "模拟已恢复",
+    "reattachedToRun": "已重新连接到当前运行",
+    "showingFinishedRun": "显示上次运行结果；点击「重新运行」可再次运行",
+    "restartingSim": "从第 1 轮重新运行模拟",
     "preparingGoBack": "准备返回 Step 2，正在关闭模拟...",
     "closingSimEnv": "正在关闭模拟环境...",
     "simEnvClosed": "✓ 模拟环境已关闭",

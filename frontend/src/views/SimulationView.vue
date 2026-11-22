@@ -160,15 +160,16 @@ const handleNextStep = (params = {}) => {
     addLog(t('log.useAutoRounds'))
   }
   
-  // 构建路由参数
+  // 构建路由参数（start=1 表示显式开始一次新的运行）
   const routeParams = {
     name: 'SimulationRun',
-    params: { simulationId: currentSimulationId.value }
+    params: { simulationId: currentSimulationId.value },
+    query: { start: '1' }
   }
   
   // 如果有自定义轮数，通过 query 参数传递
   if (params.maxRounds) {
-    routeParams.query = { maxRounds: params.maxRounds }
+    routeParams.query.maxRounds = params.maxRounds
   }
   
   // 跳转到 Step 3 页面

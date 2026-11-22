@@ -1860,6 +1860,48 @@ def stop_simulation():
         }), 500
 
 
+@simulation_bp.route('/pause', methods=['POST'])
+def pause_simulation():
+    """
+    暂停模拟：当前轮结束后在轮边界等待，环境保持运行，可恢复
+
+    请求（JSON）：{"simulation_id": "sim_xxxx"}
+    返回：运行状态；runner_status 先保持 running（pause_requested=true），
+         当前轮结束后变为 paused
+    """
+    data = request.get_json(silent=True) or {}
+    simulation_id = data.get('simulation_id')
+    if not simulation_id:
+        return jsonify({"success": False, "error": t('api.requireSimulationId')}), 400
+
+    try:
+        run_state = SimulationRunner.pause_simulation(simulation_id)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+    return jsonify({"success": True, "data": run_state.to_dict()})
+
+
+@simulation_bp.route('/resume', methods=['POST'])
+def resume_simulation():
+    """
+    恢复已暂停的模拟（从下一轮继续），或撤销尚未生效的暂停请求
+
+    请求（JSON）：{"simulation_id": "sim_xxxx"}
+    """
+    data = request.get_json(silent=True) or {}
+    simulation_id = data.get('simulation_id')
+    if not simulation_id:
+        return jsonify({"success": False, "error": t('api.requireSimulationId')}), 400
+
+    try:
+        run_state = SimulationRunner.resume_simulation(simulation_id)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+    return jsonify({"success": True, "data": run_state.to_dict()})
+
+
 # ============== 实时状态监控接口 ==============
 
 @simulation_bp.route('/<simulation_id>/run-status', methods=['GET'])
