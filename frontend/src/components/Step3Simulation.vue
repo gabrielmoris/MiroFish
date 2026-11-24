@@ -91,6 +91,33 @@
       </div>
 
       <div class="action-controls">
+        <template v-if="phase === 1">
+          <button
+            class="action-btn secondary"
+            :title="$t('step3.pauseTooltip')"
+            :disabled="isPauseBusy || isStopping || runStatus.runner_status === 'stopping'"
+            @click="isPauseActive ? handleResume() : handlePause()"
+          >
+            {{ isPauseActive ? $t('step3.resumeBtn') : $t('step3.pauseBtn') }}
+          </button>
+          <button
+            class="action-btn secondary"
+            :disabled="isStopping || runStatus.runner_status === 'stopping'"
+            @click="handleStopSimulation"
+          >
+            {{ isStopping ? $t('step3.stoppingBtn') : $t('step3.stopBtn') }}
+          </button>
+        </template>
+        <button
+          v-else-if="phase === 2 || startError"
+          class="action-btn secondary"
+          :class="{ confirming: confirmRestart }"
+          :title="$t('step3.restartTooltip')"
+          :disabled="isStarting || isGeneratingReport"
+          @click="handleRestart"
+        >
+          {{ confirmRestart ? $t('step3.restartConfirmBtn') : $t('step3.restartBtn') }}
+        </button>
         <button 
           class="action-btn primary"
           :disabled="phase !== 2 || isGeneratingReport"
@@ -292,6 +319,8 @@ import { useI18n } from 'vue-i18n'
 import {
   startSimulation,
   stopSimulation,
+  pauseSimulation,
+  resumeSimulation,
   getRunStatus,
   getRunStatusDetail
 } from '../api/simulation'
@@ -308,7 +337,12 @@ const props = defineProps({
   },
   projectData: Object,
   graphData: Object,
-  systemLogs: Array
+  systemLogs: Array,
+  // 由 Step 2「开始模拟」显式发起；否则打开页面只连接已有运行，不重新开始
+  startRequested: {
+    type: Boolean,
+    default: false
+  }
 })
 
 const emit = defineEmits(['go-back', 'next-step', 'add-log', 'update-status'])
@@ -320,6 +354,10 @@ const isGeneratingReport = ref(false)
 const phase = ref(0) // 0: 未开始, 1: 运行中, 2: 已完成
 const isStarting = ref(false)
 const isStopping = ref(false)
+const isPauseBusy = ref(false)
+const confirmRestart = ref(false)
+let confirmRestartTimer = null
+const reportedStatus = ref('') // 最近一次上报给父组件的运行状态
 const startError = ref(null)
 const runStatus = ref({})
 const allActions = ref([]) // 所有动作（增量累积）
@@ -327,6 +365,11 @@ const actionIds = ref(new Set()) // 用于去重的动作ID集合
 const scrollContainer = ref(null)
 
 // Computed
+// 已暂停，或已请求暂停但当前轮尚未结束
+const isPauseActive = computed(() => {
+  return runStatus.value.runner_status === 'paused' || runStatus.value.pause_requested === true
+})
+
 // 按时间顺序显示动作（最新的在最后面，即底部）
 const chronologicalActions = computed(() => {
   return allActions.value
@@ -376,6 +419,8 @@ const resetAllState = () => {
   startError.value = null
   isStarting.value = false
   isStopping.value = false
+  isPauseBusy.value = false
+  reportedStatus.value = ''
   stopPolling()  // 停止之前可能存在的轮询
 }
 
@@ -462,6 +507,63 @@ const handleStopSimulation = async () => {
   }
 }
 
+// 仅在状态变化时通知父组件，并记录暂停/恢复
+const reportStatus = (status) => {
+  if (reportedStatus.value === status) return
+  if (status === 'paused') {
+    addLog(t('log.simPaused'))
+  } else if (reportedStatus.value === 'paused' && status === 'processing') {
+    addLog(t('log.simResumed'))
+  }
+  reportedStatus.value = status
+  emit('update-status', status)
+}
+
+// 暂停：当前轮结束后生效
+const handlePause = async () => {
+  if (!props.simulationId || isPauseBusy.value) return
+  isPauseBusy.value = true
+  try {
+    const res = await pauseSimulation({ simulation_id: props.simulationId })
+    runStatus.value = { ...runStatus.value, ...(res.data || {}) }
+    addLog(t('log.pauseRequested'))
+    reportStatus(res.data?.runner_status === 'paused' ? 'paused' : 'pausing')
+  } catch (err) {
+    addLog(t('log.pauseFailed', { error: err.message }))
+  } finally {
+    isPauseBusy.value = false
+  }
+}
+
+// 恢复，或撤销尚未生效的暂停
+const handleResume = async () => {
+  if (!props.simulationId || isPauseBusy.value) return
+  isPauseBusy.value = true
+  try {
+    const res = await resumeSimulation({ simulation_id: props.simulationId })
+    runStatus.value = { ...runStatus.value, ...(res.data || {}) }
+    addLog(t('log.resumeRequested'))
+  } catch (err) {
+    addLog(t('log.resumeFailed', { error: err.message }))
+  } finally {
+    isPauseBusy.value = false
+  }
+}
+
+// 重新运行：点击两次确认，避免误操作覆盖上次结果
+const handleRestart = () => {
+  if (!confirmRestart.value) {
+    confirmRestart.value = true
+    clearTimeout(confirmRestartTimer)
+    confirmRestartTimer = setTimeout(() => { confirmRestart.value = false }, 4000)
+    return
+  }
+  confirmRestart.value = false
+  clearTimeout(confirmRestartTimer)
+  addLog(t('log.restartingSim'))
+  doStartSimulation()
+}
+
 // 轮询状态
 let statusTimer = null
 let detailTimer = null
@@ -527,6 +629,10 @@ const fetchRunStatus = async () => {
         phase.value = 2
         stopPolling()
         emit('update-status', 'completed')
+      } else if (data.runner_status === 'paused') {
+        reportStatus('paused')
+      } else if (data.runner_status === 'running') {
+        reportStatus(data.pause_requested ? 'pausing' : 'processing')
       }
     }
   } catch (err) {
@@ -688,15 +794,60 @@ watch(() => props.systemLogs?.length, () => {
   })
 })
 
-onMounted(() => {
+const ACTIVE_RUN_STATUSES = ['starting', 'running', 'paused', 'stopping']
+const FINISHED_RUN_STATUSES = ['completed', 'stopped', 'failed']
+
+// 打开页面时先看已有运行：运行中或暂停则继续跟踪，已结束则展示结果；
+// 从未运行过才启动。刷新页面不会再重新开始模拟。
+const attachToExistingRun = async () => {
+  try {
+    const res = await getRunStatus(props.simulationId)
+    const data = res.data || {}
+    const status = data.runner_status
+
+    if (ACTIVE_RUN_STATUSES.includes(status)) {
+      phase.value = 1
+      runStatus.value = data
+      prevTwitterRound.value = data.twitter_current_round || 0
+      prevRedditRound.value = data.reddit_current_round || 0
+      addLog(t('log.reattachedToRun'))
+      emit('update-status', 'processing')
+      await fetchRunStatusDetail()
+      await fetchRunStatus()
+      startStatusPolling()
+      startDetailPolling()
+      return true
+    }
+
+    if (FINISHED_RUN_STATUSES.includes(status)) {
+      runStatus.value = data
+      addLog(t('log.showingFinishedRun'))
+      await fetchRunStatusDetail()
+      await fetchRunStatus()
+      return true
+    }
+  } catch (err) {
+    console.warn('Failed to check the existing run:', err)
+  }
+  return false
+}
+
+onMounted(async () => {
   addLog(t('log.step3Init'))
-  if (props.simulationId) {
+  if (!props.simulationId) return
+
+  if (props.startRequested) {
+    doStartSimulation()
+    return
+  }
+  if (!(await attachToExistingRun())) {
     doStartSimulation()
   }
 })
 
 onUnmounted(() => {
   stopPolling()
+  clearTimeout(confirmRestartTimer)
 })
 </script>
 
@@ -888,9 +1039,30 @@ onUnmounted(() => {
   letter-spacing: 0.05em;
 }
 
+.action-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .action-btn.primary {
   background: #000;
   color: #FFF;
+}
+
+.action-btn.secondary {
+  background: #FFF;
+  color: #333;
+  border: 1px solid #DDD;
+}
+
+.action-btn.secondary:hover:not(:disabled) {
+  border-color: #999;
+}
+
+.action-btn.secondary.confirming {
+  border-color: #D32F2F;
+  color: #D32F2F;
 }
 
 .action-btn.primary:hover:not(:disabled) {

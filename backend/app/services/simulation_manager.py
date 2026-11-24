@@ -498,6 +498,16 @@ class SimulationManager:
         
         return simulations
     
+    def delete_simulation(self, simulation_id: str) -> bool:
+        """删除模拟目录（配置、人设、数据库、日志）。调用方须先确认模拟不再运行"""
+        self._simulations.pop(simulation_id, None)
+        sim_dir = os.path.join(self.SIMULATION_DATA_DIR, simulation_id)
+        if not os.path.isdir(sim_dir):
+            return False
+        shutil.rmtree(sim_dir)
+        logger.info(f"模拟已删除: {simulation_id}")
+        return True
+
     def get_profiles(self, simulation_id: str, platform: str = None) -> List[Dict[str, Any]]:
         """获取模拟的Agent Profile"""
         state = self._load_simulation_state(simulation_id)

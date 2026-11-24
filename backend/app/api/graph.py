@@ -5,6 +5,7 @@
 
 import os
 import re
+import sys
 import traceback
 import threading
 from contextlib import ExitStack, nullcontext
@@ -25,6 +26,7 @@ from ..models.project import ProjectManager, ProjectStatus
 from ..services.simulation_manager import SimulationManager
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
 from ..services.zep_graph_memory_updater import ZepGraphMemoryManager
+from ..services.report_agent import ReportManager
 from ..utils.llm_client import LLMResponseError
 
 # 获取日志器
@@ -171,21 +173,40 @@ def delete_project(project_id: str):
 
 def _delete_project_impl(project_id: str):
     """
-    删除项目
+    删除项目及其全部内容：所有模拟、报告、上传文件和 Zep 图谱。
+    任一模拟仍在运行（或暂停）时拒绝删除。
     """
     project = ProjectManager.get_project(project_id)
-    if not project:
+    simulation_manager = SimulationManager()
+    simulations = simulation_manager.list_simulations(project_id=project_id)
+
+    # 项目已不存在但仍有遗留模拟时，也允许清理这些模拟
+    if not project and not simulations:
         return jsonify({
             "success": False,
             "error": t('api.projectNotFound', id=project_id)
         }), 404
-    if _project_has_active_build(project):
+    if project and _project_has_active_build(project):
         return jsonify({
             "success": False,
             "error": t('api.graphBuilding')
         }), 409
 
-    graph_id = project.graph_id
+    active_simulations = sorted(
+        simulation.simulation_id
+        for simulation in simulations
+        if SimulationRunner.is_simulation_active(simulation.simulation_id)
+    )
+    if active_simulations:
+        return jsonify({
+            "success": False,
+            "error": t(
+                'api.projectHasActiveSimulations',
+                ids=', '.join(active_simulations),
+            ),
+        }), 409
+
+    graph_id = project.graph_id if project else None
     graph_guard = (
         graph_lifecycle_lock(graph_id) if graph_id else nullcontext()
     )
@@ -194,9 +215,23 @@ def _delete_project_impl(project_id: str):
             _delete_cloud_graph_if_present(graph_id)
         except GraphInUseError as error:
             return jsonify({"success": False, "error": str(error)}), 409
+
+        # Cloud graph is gone; now remove everything stored locally.
+        deleted_reports = 0
+        for simulation in simulations:
+            simulation_id = simulation.simulation_id
+            for report in ReportManager.list_reports(
+                simulation_id=simulation_id,
+                limit=sys.maxsize,
+            ):
+                if ReportManager.delete_report(report.report_id):
+                    deleted_reports += 1
+            SimulationRunner.forget_simulation(simulation_id)
+            simulation_manager.delete_simulation(simulation_id)
+
         # The local reference remains protected until it is removed, so a new
         # simulation cannot claim the just-deleted graph in between.
-        success = ProjectManager.delete_project(project_id)
+        success = ProjectManager.delete_project(project_id) if project else True
     
     if not success:
         return jsonify({
@@ -204,9 +239,20 @@ def _delete_project_impl(project_id: str):
             "error": t('api.projectDeleteFailed', id=project_id)
         }), 404
 
+    logger.info(
+        "项目已删除: %s（模拟 %d 个，报告 %d 份）",
+        project_id,
+        len(simulations),
+        deleted_reports,
+    )
     return jsonify({
         "success": True,
-        "message": t('api.projectDeleted', id=project_id)
+        "message": t('api.projectDeleted', id=project_id),
+        "data": {
+            "project_id": project_id,
+            "deleted_simulations": len(simulations),
+            "deleted_reports": deleted_reports,
+        },
     })
 
 

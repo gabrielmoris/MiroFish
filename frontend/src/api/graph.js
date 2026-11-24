@@ -64,3 +64,15 @@ export function getProject(projectId) {
     method: 'get'
   })
 }
+
+/**
+ * 删除项目及其全部内容（模拟、报告、上传文件、Zep 图谱）
+ * @param {String} projectId - 项目ID
+ * @returns {Promise}
+ */
+export function deleteProject(projectId) {
+  return service({
+    url: `/api/graph/project/${projectId}`,
+    method: 'delete'
+  })
+}

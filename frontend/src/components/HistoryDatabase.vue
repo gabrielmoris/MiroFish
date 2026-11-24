@@ -183,6 +183,48 @@
             <div class="modal-playback-hint">
               <span class="hint-text">{{ $t('history.replayHint') }}</span>
             </div>
+
+            <!-- 管理操作：重新运行 / 删除（页内确认） -->
+            <div class="modal-manage">
+              <template v-if="pendingAction">
+                <p class="manage-confirm-text">
+                  {{ pendingAction === 'delete' ? $t('history.deleteConfirm') : $t('history.restartConfirm') }}
+                </p>
+                <p v-if="manageError" class="manage-error" role="alert">{{ manageError }}</p>
+                <div class="manage-buttons">
+                  <button class="manage-btn" :disabled="isDeleting" @click="cancelPendingAction">
+                    {{ $t('history.cancel') }}
+                  </button>
+                  <button
+                    class="manage-btn"
+                    :class="pendingAction === 'delete' ? 'danger-solid' : 'primary'"
+                    :disabled="isDeleting"
+                    @click="confirmPendingAction"
+                  >
+                    <template v-if="pendingAction === 'delete'">
+                      {{ isDeleting ? $t('history.deleting') : $t('history.deleteConfirmButton') }}
+                    </template>
+                    <template v-else>{{ $t('history.restartButton') }}</template>
+                  </button>
+                </div>
+              </template>
+              <div v-else class="manage-buttons">
+                <button
+                  class="manage-btn"
+                  :disabled="!canRestart(selectedProject)"
+                  @click="pendingAction = 'restart'"
+                >
+                  {{ $t('history.restartButton') }}
+                </button>
+                <button
+                  class="manage-btn danger"
+                  :disabled="!selectedProject.project_id"
+                  @click="pendingAction = 'delete'"
+                >
+                  {{ $t('history.deleteButton') }}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </Transition>
@@ -195,6 +237,7 @@ import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } f
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getSimulationHistory } from '../api/simulation'
+import { deleteProject } from '../api/graph'
 
 const router = useRouter()
 const route = useRoute()
@@ -207,6 +250,12 @@ const isExpanded = ref(false)
 const hoveringCard = ref(null)
 const historyContainer = ref(null)
 const selectedProject = ref(null)  // 当前选中的项目（用于弹窗）
+const pendingAction = ref(null)    // 等待确认的操作：'restart' | 'delete'
+const isDeleting = ref(false)
+const manageError = ref('')
+
+// 准备完成后才能重新运行
+const RESTARTABLE_STATUSES = ['ready', 'running', 'paused', 'stopping', 'completed', 'stopped', 'failed']
 let observer = null
 let isAnimating = false  // 动画锁，防止闪烁
 let expandDebounceTimer = null  // 防抖定时器
@@ -406,7 +455,50 @@ const navigateToProject = (simulation) => {
 
 // 关闭弹窗
 const closeModal = () => {
+  if (isDeleting.value) return
   selectedProject.value = null
+  pendingAction.value = null
+  manageError.value = ''
+}
+
+const canRestart = (simulation) => {
+  return !!simulation?.simulation_id && RESTARTABLE_STATUSES.includes(simulation.status)
+}
+
+const cancelPendingAction = () => {
+  pendingAction.value = null
+  manageError.value = ''
+}
+
+const confirmPendingAction = async () => {
+  const simulation = selectedProject.value
+  if (!simulation) return
+
+  if (pendingAction.value === 'restart') {
+    // 沿用上次的轮数，避免重新运行时意外跑满配置中的全部轮次
+    const query = { start: '1' }
+    if (simulation.total_rounds > 0) {
+      query.maxRounds = simulation.total_rounds
+    }
+    closeModal()
+    router.push({ name: 'SimulationRun', params: { simulationId: simulation.simulation_id }, query })
+    return
+  }
+
+  if (pendingAction.value === 'delete' && simulation.project_id) {
+    isDeleting.value = true
+    manageError.value = ''
+    try {
+      await deleteProject(simulation.project_id)
+      isDeleting.value = false
+      closeModal()
+      await loadHistory()
+    } catch (err) {
+      manageError.value = t('history.deleteFailed', { error: err.message })
+    } finally {
+      isDeleting.value = false
+    }
+  }
 }
 
 // 导航到图谱构建页面（Project）
@@ -1344,5 +1436,72 @@ onUnmounted(() => {
   letter-spacing: 0.3px;
   text-align: center;
   line-height: 1.5;
+}
+
+/* 管理操作 */
+.modal-manage {
+  border-top: 1px solid #F3F4F6;
+  padding: 16px 32px 24px;
+  background: #FFFFFF;
+}
+
+.manage-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.manage-confirm-text {
+  margin: 0 0 12px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: #374151;
+}
+
+.manage-error {
+  margin: 0 0 12px;
+  font-size: 0.8rem;
+  color: #D32F2F;
+}
+
+.manage-btn {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.3px;
+  padding: 8px 14px;
+  background: #FFFFFF;
+  color: #374151;
+  border: 1px solid #E5E7EB;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+
+.manage-btn:hover:not(:disabled) {
+  border-color: #9CA3AF;
+}
+
+.manage-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.manage-btn.primary {
+  background: #000000;
+  color: #FFFFFF;
+  border-color: #000000;
+}
+
+.manage-btn.danger {
+  color: #D32F2F;
+}
+
+.manage-btn.danger:hover:not(:disabled) {
+  border-color: #D32F2F;
+}
+
+.manage-btn.danger-solid {
+  background: #D32F2F;
+  color: #FFFFFF;
+  border-color: #D32F2F;
 }
 </style>
